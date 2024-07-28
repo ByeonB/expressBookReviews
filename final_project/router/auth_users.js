@@ -1,96 +1,104 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
 let books = require("./booksdb.js");
+const session = require('express-session');
 const regd_users = express.Router();
 
 let users = [];
 
 const isValid = (username)=>{ 
-    const User = users.filter((user)=>(
-        user.username===username
-    ))
-    if(User.length>0){
-        return true;
-    }
-    return false;
+ let userwithsamename = users.filter((user)=>{
+   return user.username === username
+ });
+ if (userwithsamename.length > 0){
+   return true;
+ } else {
+   return false;
+ }
 }
 
 const authenticatedUser = (username,password)=>{ 
-    if(isValid(username)){
-        const User = users.filter((user)=>(
-            user.username===username && user.password === password
-        ))
-        if(User.length>0){
-            return true;
-        }
-    }
- 
+  let validusers = users.filter((user)=>{
+    return (user.username === username && user.password === password)
+  });
+  if(validusers.length > 0){
+    return true;
+  } else {
     return false;
+  }
 }
 
 //only registered users can login
 regd_users.post("/login", (req,res) => {
-    const Username = req.body.username;
-    const Password = req.body.password;
-    if(!Username || !Password){
-        return res.status(404).json({message: "Username or password is empty"});
-    }else{
-        if(authenticatedUser(Username, Password)){
-            let accessToken  = jwt.sign({
-                data: Password
-            }, 'access', { expiresIn: 60 * 60 });
+  const username = req.body.username;
+  const password = req.body.password;
 
-            req.session.authorization = {
-               accessToken, Username
-            }
-            console.log(accessToken);
-            req.session.save((err) => {
-                if (err) {
-                    return res.status(500).json({ message: "Server error" });
-                }
-                return res.status(200).json({ message: "User logged in successfully" });
-            });
-        } else {
-            return res.status(208).json({ message: "Invalid Login. Check username and password" });
-        }
-    }
+  if (!username || !password) {
+      return res.status(404).json({message: "Error logging in"});
+  }
+
+  if (authenticatedUser(username,password)) {
+    let accessToken = jwt.sign({
+      data: password
+    }, 'access', { expiresIn: 60 * 60 });
+
+    req.session.authorization = {
+      accessToken,username
+  }
+  return res.status(200).send("User successfully logged in");
+  } else {
+    return res.status(208).json({message: "Invalid Login. Check username and password"});
+  }
 });
 
 // Add a book review
 regd_users.put("/auth/review/:isbn", (req, res) => {
-    if(req.session.authorization){
-        const user = req.session.authorization["Username"]
-        const ISBN = req.params.isbn;
-        const review = req.body.review;
-        
-        if(Object.keys(books[ISBN]["reviews"]).includes(user)){
-            books[ISBN]["reviews"][user] = review;
-            return res.status(200).json({ message: "Review updated successfully" });
-        }else{
-            books[ISBN]["reviews"][user] = review;
-            return res.status(200).json({ message: "Added new review successfully" });
-        }  
-    }else{
-        return res.status(403).json({ message: "User not logged in" });
+  const isbn = req.params.isbn;
+  const username = req.session.authorization.username;
+  const review = req.query.review;
+  
+  if (isbn && username && review) {
+    if (books[isbn]) {
+      if (!books[isbn].reviews || !Array.isArray(books[isbn].reviews)) {
+        books[isbn].reviews = []; // If the book has no reviews yet or reviews is not an array
     }
 
+      const existingReviewIndex = books[isbn].reviews.findIndex((review) => review.username === username);
+      if (existingReviewIndex !== -1) { // If the user has already posted a review
+        books[isbn].reviews[existingReviewIndex].review = review;
+        res.status(200).json({ message: 'Review modified successfully' });
+      } else { // If the user has not posted a review yet
+        books[isbn].reviews.push({ username: username, review: review });
+        res.status(200).json({ message: 'Review added successfully' });
+      }
+    } else {
+      return res.status(404).json({message: "Book not found"});
+    }
+  } else {
+    return res.status(404).json({message: "Invalid request"});
+  }
 });
 
 regd_users.delete("/auth/review/:isbn", (req, res) => {
-    if(req.session.authorization){
-        const user = req.session.authorization["Username"]
-        const ISBN = req.params.isbn;
-        if(Object.keys(books[ISBN]["reviews"]).includes(user)){
-            delete books[ISBN]["reviews"][user];
-            return res.status(200).json({ message: "Review deleted successfully" });
-        }else{
-            return res.status(200).json({ message: "User haven't posted any reviews yet" });
-        }  
-    }else{
-        return res.status(403).json({ message: "User not logged in" });
+  const isbn = req.params.isbn;
+  const username = req.session.authorization.username;
+  if (isbn && username) {
+    if (books[isbn]) {
+      const existingReviewIndex = books[isbn].reviews.findIndex((review) => review.username === username);
+      if (existingReviewIndex !== -1) {
+        books[isbn].reviews.splice(existingReviewIndex, 1);
+        res.status(200).json({ message: 'Review deleted successfully' });
+      } else {
+        return res.status(404).json({message: "Review not found"});
+      }
+    } else {
+      return res.status(404).json({message: "Book not found"});
     }
-
+  } else {
+    return res.status(404).json({message: "Invalid request"});
+  }
 });
+
 
 module.exports.authenticated = regd_users;
 module.exports.isValid = isValid;
